@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::IpAddr;
 
 use anyhow::Result;
@@ -7,10 +8,12 @@ pub use stock::Stock;
 
 use crate::IpType;
 
+#[cfg(target_os = "linux")]
+mod lxd;
 mod peer;
 mod stock;
 
 #[async_trait(?Send)]
 pub trait Interface {
-    async fn get_ip(&self, family: IpType) -> Result<Vec<IpAddr>>;
+    async fn get_ip(&self, family: IpType) -> Result<HashMap<String, Vec<IpAddr>>>; // prefix -> [ip]
 }

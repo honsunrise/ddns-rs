@@ -2,11 +2,9 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::net::{IpAddr, Ipv4Addr};
 
-use addr::parse_dns_name;
 use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
-use serde::Deserialize;
 use serde_json::json;
 
 use super::{record_type_from_ip, Provider};
@@ -17,7 +15,7 @@ pub struct Credentials {
     pub secret: String,
 }
 
-#[derive(Deserialize, PartialOrd, Eq, PartialEq, Hash, Debug, Clone)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct DNSRecord {
     pub kind: String,
     pub domain: String,
@@ -41,7 +39,6 @@ impl AsRef<IpAddr> for DNSRecord {
 
 pub struct Godaddy {
     domain: String,
-    name: String,
     client: Client,
     cred: Credentials,
 }
@@ -54,15 +51,10 @@ impl Godaddy {
             .build()?;
         let api_key = api_key.as_ref().to_owned();
         let secret = secret.as_ref().to_owned();
-        let dns = dns.as_ref().to_owned();
-
-        let result = parse_dns_name(&dns).unwrap();
-        let domain = result.root().unwrap_or("").to_owned();
-        let name = dns.trim_end_matches(&domain).trim_end_matches('.').to_owned();
+        let domain = dns.as_ref().to_owned();
 
         Ok(Godaddy {
             domain,
-            name,
             client,
             cred: Credentials { api_key, secret },
         })
@@ -73,16 +65,13 @@ impl Godaddy {
 impl Provider for Godaddy {
     type DNSRecord = DNSRecord;
 
-    async fn get_dns_record(&self, family: IpType) -> Result<Vec<Self::DNSRecord>> {
-        let mut records = vec![];
+    async fn get_dns_record(&self, family: IpType) -> Result<HashMap<String, Vec<(Self::DNSRecord, IpAddr)>>> {
+        let mut records_groups = HashMap::new();
         let kind = match family {
             IpType::V4 => "A",
             IpType::V6 => "AAAA",
         };
-        let url = format!(
-            "https://api.godaddy.com/v1/domains/{}/records/{}/{}",
-            self.domain, kind, self.name
-        );
+        let url = format!("https://api.godaddy.com/v1/domains/{}/records/{}", self.domain, kind);
         let result = self
             .client
             .get(url)
@@ -95,22 +84,35 @@ impl Provider for Godaddy {
             .json::<Vec<HashMap<String, serde_json::Value>>>()
             .await?;
         for item in result {
-            records.push(DNSRecord {
-                kind: kind.to_owned(),
-                domain: self.domain.clone(),
-                name: self.name.clone(),
-                ttl: item.get("ttl").unwrap().as_u64().unwrap(),
-                ip: item.get("data").unwrap().as_str().unwrap().parse().unwrap(),
-            })
+            let ip = item.get("data").unwrap().as_str().unwrap().parse()?;
+            let ttl = item.get("ttl").unwrap().as_u64().unwrap();
+            let name = item.get("name").unwrap().as_str().unwrap();
+            let records = match records_groups.get_mut(name) {
+                Some(v) => v,
+                None => {
+                    records_groups.insert(name.to_owned(), vec![]);
+                    records_groups.get_mut(name).unwrap()
+                },
+            };
+            records.push((
+                DNSRecord {
+                    kind: kind.to_owned(),
+                    domain: self.domain.clone(),
+                    name: name.to_owned(),
+                    ttl,
+                    ip,
+                },
+                ip,
+            ))
         }
-        Ok(records)
+        Ok(records_groups)
     }
 
-    async fn create_dns_record(&self, ip: &IpAddr, ttl: u32) -> Result<()> {
+    async fn create_dns_record<P: AsRef<str> + Send>(&self, prefix: P, ip: &IpAddr, ttl: u32) -> Result<()> {
         let url = format!("https://api.godaddy.com/v1/domains/{}/records", self.domain);
         let json = vec![json!({
-            "data": ip.to_string(),
-            "name": self.name,
+            "data": ip,
+            "name": prefix.as_ref(),
             "type": record_type_from_ip(ip),
             "ttl": ttl,
         })];

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.2.0 - 2022-03-27
+
+* Add lxd support(read name and ip from lxd and update to the provider)
+* Upgrade cloudflare to v0.9.1 for fix https://github.com/cloudflare/cloudflare-rs/issues/178
+
 ## v0.1.0 - 2020-12-06
 
 * Initial release

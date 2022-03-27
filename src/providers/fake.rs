@@ -18,6 +18,7 @@ use crate::{IpType, Shutdown};
 #[derive(Eq, PartialEq, Hash, Debug, Clone)]
 pub struct DNSRecord {
     pub id: u32,
+    pub prefix: String,
     pub ip: IpAddr,
     pub ttl: u32,
     pub deadline: Instant,
@@ -108,20 +109,44 @@ impl Fake {
 impl Provider for Fake {
     type DNSRecord = DNSRecord;
 
-    async fn get_dns_record(&self, family: IpType) -> Result<Vec<Self::DNSRecord>> {
+    async fn get_dns_record(&self, family: IpType) -> Result<HashMap<String, Vec<(Self::DNSRecord, IpAddr)>>> {
+        let mut records_groups = HashMap::new();
+
         match family {
             IpType::V4 => {
                 let ipv4_cache = self.ipv4_cache.lock().await;
-                Ok(ipv4_cache.iter().map(|(_, v)| v).cloned().collect())
+                for item in ipv4_cache.values() {
+                    let prefix = &item.prefix;
+                    let records = match records_groups.get_mut(prefix) {
+                        Some(v) => v,
+                        None => {
+                            records_groups.insert(prefix.clone(), vec![]);
+                            records_groups.get_mut(prefix).unwrap()
+                        },
+                    };
+                    records.push((item.clone(), item.ip))
+                }
             },
             IpType::V6 => {
                 let ipv6_cache = self.ipv6_cache.lock().await;
-                Ok(ipv6_cache.iter().map(|(_, v)| v).cloned().collect())
+                for item in ipv6_cache.values() {
+                    let prefix = &item.prefix;
+                    let records = match records_groups.get_mut(prefix) {
+                        Some(v) => v,
+                        None => {
+                            records_groups.insert(prefix.clone(), vec![]);
+                            records_groups.get_mut(prefix).unwrap()
+                        },
+                    };
+                    records.push((item.clone(), item.ip))
+                }
             },
         }
+        Ok(records_groups)
     }
 
-    async fn create_dns_record(&self, ip: &IpAddr, ttl: u32) -> Result<()> {
+    async fn create_dns_record<P: AsRef<str> + Send>(&self, prefix: P, ip: &IpAddr, ttl: u32) -> Result<()> {
+        let prefix = prefix.as_ref();
         let id = self.id_index.fetch_add(1, Ordering::SeqCst);
         match ip {
             IpAddr::V4(_) => {
@@ -129,6 +154,7 @@ impl Provider for Fake {
                 let deadline = Instant::now() + Duration::from_secs(ttl as u64);
                 let record = DNSRecord {
                     id,
+                    prefix: prefix.to_owned(),
                     ip: *ip,
                     ttl,
                     deadline,
@@ -141,6 +167,7 @@ impl Provider for Fake {
                 let deadline = Instant::now() + Duration::from_secs(ttl as u64);
                 let record = DNSRecord {
                     id,
+                    prefix: prefix.to_owned(),
                     ip: *ip,
                     ttl,
                     deadline,

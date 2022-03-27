@@ -63,7 +63,7 @@ impl Email {
     }
 }
 
-fn build_email(new_ips: &[IpAddr]) -> String {
+fn build_email(new_ips: &[(String, IpAddr)]) -> String {
     // Create the html we want to send.
     let html = html! {
         head {
@@ -150,7 +150,7 @@ fn build_email(new_ips: &[IpAddr]) -> String {
             ol class="ip-box" {
                 @for ip in new_ips.iter() {
                     li class="ip-item" {
-                        (ip)
+                        (ip.0) "->" (ip.1)
                     }
                 }
             }
@@ -159,10 +159,10 @@ fn build_email(new_ips: &[IpAddr]) -> String {
     html.into_string()
 }
 
-fn build_email_plaintext(new_ips: &[IpAddr]) -> String {
+fn build_email_plaintext(new_ips: &[(String, IpAddr)]) -> String {
     let new_ips_str = new_ips
         .iter()
-        .map(|v| format!("\t{}\n", v))
+        .map(|v| format!("\t{}: {}\n", v.0, v.1))
         .collect::<Vec<_>>()
         .concat();
     let logo = r#"
@@ -176,7 +176,7 @@ DNS record updater
 
 #[async_trait(?Send)]
 impl Notifier for Email {
-    async fn send(&self, new_ips: &[IpAddr]) -> Result<()> {
+    async fn send(&self, new_ips: &[(String, IpAddr)]) -> Result<()> {
         let email = Message::builder()
             .from(self.from.parse().unwrap())
             .to(self.to.parse().unwrap())

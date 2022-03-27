@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter};
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 
@@ -14,19 +14,14 @@ use cloudflare::framework::auth::Credentials;
 use cloudflare::framework::{Environment, HttpApiClientConfig, SearchMatch};
 use log::{debug, warn};
 
-use super::Provider;
+use super::{get_dns_prefix_root, Provider};
 use crate::IpType;
 
-#[derive(PartialOrd, Eq, PartialEq, Hash, Debug, Clone)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct DNSRecord {
     pub id: String,
+    pub prefix: String,
     pub ip: IpAddr,
-}
-
-impl Display for DNSRecord {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.id)
-    }
 }
 
 impl AsRef<IpAddr> for DNSRecord {
@@ -54,22 +49,13 @@ impl Cloudflare {
             Environment::Production,
         )?);
 
-        let zone_name = if dns.ends_with('.') {
-            let mut v = dns.rsplit('.').skip(1).take(2).collect::<Vec<_>>();
-            v.reverse();
-            v.join(".")
-        } else {
-            let mut v = dns.rsplit('.').take(2).collect::<Vec<_>>();
-            v.reverse();
-            v.join(".")
-        };
-
+        let (_, zone_name) = get_dns_prefix_root(dns)?;
         debug!("zone name is {}", zone_name);
 
         let zone_result = api_client
             .request(&ListZones {
                 params: ListZonesParams {
-                    name: Some(zone_name.clone()),
+                    name: Some(zone_name.to_owned()),
                     status: Some(zone::Status::Active),
                     page: Some(1),
                     per_page: Some(50),
@@ -98,8 +84,8 @@ impl Cloudflare {
 impl Provider for Cloudflare {
     type DNSRecord = DNSRecord;
 
-    async fn get_dns_record(&self, family: IpType) -> Result<Vec<Self::DNSRecord>> {
-        let mut result = vec![];
+    async fn get_dns_record(&self, family: IpType) -> Result<HashMap<String, Vec<(Self::DNSRecord, IpAddr)>>> {
+        let mut records_groups = HashMap::new();
         let mut current_page = 1;
         loop {
             let dns_result = self
@@ -108,7 +94,7 @@ impl Provider for Cloudflare {
                     zone_identifier: &self.zone_identifier,
                     params: ListDnsRecordsParams {
                         record_type: None,
-                        name: Some(self.dns.clone()),
+                        name: None,
                         page: Some(current_page),
                         per_page: Some(50),
                         order: None,
@@ -124,19 +110,43 @@ impl Provider for Cloudflare {
             }
 
             for dns in &dns_result {
+                let (name, _) = get_dns_prefix_root(&dns.name)?;
+                let records = match records_groups.get_mut(&name) {
+                    Some(v) => v,
+                    None => {
+                        records_groups.insert(name.clone(), vec![]);
+                        records_groups.get_mut(&name).unwrap()
+                    },
+                };
                 match (family, &dns.content) {
-                    (IpType::V6, DnsContent::AAAA { content: ip }) => {
-                        result.push(DNSRecord {
-                            id: dns.id.clone(),
-                            ip: IpAddr::V6(*ip),
-                        });
+                    (
+                        IpType::V6,
+                        DnsContent::AAAA {
+                            content: ip,
+                        },
+                    ) => {
+                        records.push((
+                            DNSRecord {
+                                id: dns.id.clone(),
+                                prefix: name.to_owned(),
+                                ip: IpAddr::V6(*ip),
+                            },
+                            IpAddr::V6(*ip),
+                        ));
                     },
-                    (IpType::V4, DnsContent::A { content: ip }) => {
-                        result.push(DNSRecord {
+                    (
+                        IpType::V4,
+                        DnsContent::A {
+                            content: ip,
+                        },
+                    ) => records.push((
+                        DNSRecord {
                             id: dns.id.clone(),
+                            prefix: name.to_owned(),
                             ip: IpAddr::V4(*ip),
-                        });
-                    },
+                        },
+                        IpAddr::V4(*ip),
+                    )),
                     _ => {},
                 }
             }
@@ -146,14 +156,20 @@ impl Provider for Cloudflare {
             }
             current_page += 1;
         }
-        Ok(result)
+        Ok(records_groups)
     }
 
-    async fn create_dns_record(&self, ip: &IpAddr, ttl: u32) -> Result<()> {
-        let content = match *ip {
-            IpAddr::V6(ip) => DnsContent::AAAA { content: ip },
-            IpAddr::V4(ip) => DnsContent::A { content: ip },
+    async fn create_dns_record<P: AsRef<str> + Send>(&self, prefix: P, ip: &IpAddr, ttl: u32) -> Result<()> {
+        let prefix = prefix.as_ref();
+        let content = match ip {
+            IpAddr::V6(ip) => DnsContent::AAAA {
+                content: *ip,
+            },
+            IpAddr::V4(ip) => DnsContent::A {
+                content: *ip,
+            },
         };
+        let name = format!("{}.{}", prefix, self.dns);
         self.api_client
             .request(&CreateDnsRecord {
                 zone_identifier: &self.zone_identifier,
@@ -161,7 +177,7 @@ impl Provider for Cloudflare {
                     ttl: Some(ttl),
                     priority: None,
                     proxied: None,
-                    name: &self.dns,
+                    name: &name,
                     content,
                 },
             })
@@ -175,6 +191,7 @@ impl Provider for Cloudflare {
             IpAddr::V6(ip) => DnsContent::AAAA { content: ip },
             IpAddr::V4(ip) => DnsContent::A { content: ip },
         };
+        let name = format!("{}.{}", record.prefix, self.dns);
         self.api_client
             .request(&UpdateDnsRecord {
                 zone_identifier: &self.zone_identifier,
@@ -182,7 +199,7 @@ impl Provider for Cloudflare {
                 params: UpdateDnsRecordParams {
                     ttl: None,
                     proxied: None,
-                    name: &self.dns,
+                    name: &name,
                     content,
                 },
             })

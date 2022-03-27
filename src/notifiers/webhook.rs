@@ -3,7 +3,7 @@ use std::net::IpAddr;
 use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use crate::Notifier;
 
@@ -37,10 +37,28 @@ impl Webhook {
 
 #[async_trait(?Send)]
 impl Notifier for Webhook {
-    async fn send(&self, new_ips: &[IpAddr]) -> anyhow::Result<()> {
+    async fn send(&self, new_ips: &[(String, IpAddr)]) -> anyhow::Result<()> {
         let url = &self.url;
-        let ipv4_list = new_ips.iter().filter(|v| v.is_ipv4()).collect::<Vec<_>>();
-        let ipv6_list = new_ips.iter().filter(|v| v.is_ipv6()).collect::<Vec<_>>();
+        let ipv4_list = new_ips
+            .iter()
+            .filter(|v| v.1.is_ipv4())
+            .map(|v| {
+                json!({
+                    "name": v.0,
+                    "ip": v.1,
+                })
+            })
+            .collect::<Value>();
+        let ipv6_list = new_ips
+            .iter()
+            .filter(|v| v.1.is_ipv6())
+            .map(|v| {
+                json!({
+                    "name": v.0,
+                    "ip": v.1,
+                })
+            })
+            .collect::<Value>();
         let json = vec![json!({
             "ipv4_list": ipv4_list,
             "ipv6_list": ipv6_list,

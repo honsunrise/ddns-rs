@@ -10,5 +10,5 @@ mod webhook;
 
 #[async_trait(?Send)]
 pub trait Notifier {
-    async fn send(&self, new_ips: &[IpAddr]) -> Result<()>;
+    async fn send(&self, new_ips: &[(String, IpAddr)]) -> Result<()>;
 }

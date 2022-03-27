@@ -67,11 +67,13 @@ pub(crate) async fn create_interface<S: AsRef<str>>(
 ) -> Result<Box<dyn Interface>> {
     let interface: Box<dyn Interface> = match kind.as_ref() {
         "peer" => {
+            let prefix = from_args_str!(args, "prefix");
             let url_v4 = from_args_str!(args, "url_v4");
             let url_v6 = from_args_str!(args, "url_v6");
             let ipv4_field_path = from_args_str!(args, "ipv4_field_path");
             let ipv6_field_path = from_args_str!(args, "ipv6_field_path");
             Box::new(interfaces::Peer::create(
+                prefix,
                 url_v4,
                 url_v6,
                 ipv4_field_path,
@@ -79,8 +81,9 @@ pub(crate) async fn create_interface<S: AsRef<str>>(
             )?)
         },
         "stock" => {
+            let prefix = from_args_str!(args, "prefix");
             let name = from_args_str!(args, "name");
-            Box::new(interfaces::Stock::create(name)?)
+            Box::new(interfaces::Stock::create(prefix, name)?)
         },
         _ => {
             bail!("the kind of interface '{}' not support", kind.as_ref())

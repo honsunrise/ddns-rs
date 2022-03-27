@@ -106,21 +106,26 @@ async fn run_task(
 ) -> Result<()> {
     let (provider, ttl, force) = provider;
     for family in families {
-        let target_ips = interface.get_ip(*family).await?;
-        let ips_str = target_ips.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",");
-        // check if the IP is legal
-        if target_ips.iter().any(|ip| match family {
-            IpType::V4 => ip.is_ipv6(),
-            IpType::V6 => ip.is_ipv4(),
-        }) {
-            warn!(
-                "ip(s) from interface is illegal, require {} but got: [{}]",
-                family, ips_str
-            );
-            continue;
+        let target_ips_groups = interface.get_ip(*family).await?;
+        for (prefix, target_ips) in &target_ips_groups {
+            let ips_str = target_ips.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",");
+            // check if the IP is legal
+            if target_ips.iter().any(|ip| match family {
+                IpType::V4 => ip.is_ipv6(),
+                IpType::V6 => ip.is_ipv4(),
+            }) {
+                warn!(
+                    "[{}] ip(s) from interface is illegal, require {} but got: [{}]",
+                    prefix, family, ips_str
+                );
+                continue;
+            }
+            info!("[{}] got ip(s) from interface: [{}]", prefix, ips_str);
         }
-        info!("got ip(s) from interface: [{}]", ips_str);
-        let update_ips = provider.check_and_update(&target_ips, ttl, force, *family).await?;
+
+        let update_ips = provider
+            .check_and_update(&target_ips_groups, ttl, force, *family)
+            .await?;
         if !update_ips.is_empty() {
             for notifier in notifiers.clone() {
                 if let Some(notifier) = &*notifier {

@@ -10,6 +10,7 @@ use super::Interface;
 use crate::IpType;
 
 pub struct Peer {
+    prefix: String,
     url_v4: String,
     url_v6: String,
     client_v4: Client,
@@ -19,7 +20,8 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn create<URL: AsRef<str>, P: AsRef<str>>(
+    pub fn create<T: AsRef<str>, URL: AsRef<str>, P: AsRef<str>>(
+        prefix: T,
         url_v4: URL,
         url_v6: URL,
         ipv4_field_path: P,
@@ -32,6 +34,7 @@ impl Peer {
             .local_address(IpAddr::V6(Ipv6Addr::UNSPECIFIED))
             .build()?;
         Ok(Peer {
+            prefix: prefix.as_ref().to_owned(),
             url_v4: url_v4.as_ref().to_owned(),
             url_v6: url_v6.as_ref().to_owned(),
             ipv4_field_path: ipv4_field_path.as_ref().to_owned(),
@@ -44,7 +47,7 @@ impl Peer {
 
 #[async_trait(?Send)]
 impl Interface for Peer {
-    async fn get_ip(&self, family: IpType) -> anyhow::Result<Vec<IpAddr>> {
+    async fn get_ip(&self, family: IpType) -> anyhow::Result<HashMap<String, Vec<IpAddr>>> {
         let (url, client, ip_field_path) = match family {
             IpType::V4 => (&*self.url_v4, &self.client_v4, &*self.ipv4_field_path),
             IpType::V6 => (&*self.url_v6, &self.client_v6, &*self.ipv6_field_path),
@@ -82,7 +85,7 @@ impl Interface for Peer {
                 let result = result.json::<HashMap<String, String>>().await?;
                 let result = path_value::to_value(result)?;
                 let ip = result
-                    .get::<String, _, _>(ip_field_path)?
+                    .get::<String, _, _>(parties[1])?
                     .ok_or_else(|| anyhow!("can't get ip by peer"))?;
                 ips.push(ip.parse()?);
             },
@@ -90,6 +93,6 @@ impl Interface for Peer {
                 bail!("unsupported extract method: {}", parties[0])
             },
         };
-        Ok(ips)
+        Ok(HashMap::from([(self.prefix.clone(), ips)]))
     }
 }
