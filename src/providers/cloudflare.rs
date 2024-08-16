@@ -5,17 +5,11 @@ use std::sync::Arc;
 use anyhow::{ensure, Result};
 use async_trait::async_trait;
 use cloudflare::endpoints::dns::{
-    CreateDnsRecord,
-    CreateDnsRecordParams,
-    DeleteDnsRecord,
-    DnsContent,
-    ListDnsRecords,
-    ListDnsRecordsParams,
-    UpdateDnsRecord,
-    UpdateDnsRecordParams,
+    CreateDnsRecord, CreateDnsRecordParams, DeleteDnsRecord, DnsContent, ListDnsRecords, ListDnsRecordsParams,
+    UpdateDnsRecord, UpdateDnsRecordParams,
 };
 use cloudflare::endpoints::zone::{self, ListZones, ListZonesParams};
-use cloudflare::framework::async_api::{ApiClient, Client};
+use cloudflare::framework::async_api::Client;
 use cloudflare::framework::auth::Credentials;
 use cloudflare::framework::{Environment, HttpApiClientConfig, SearchMatch};
 use log::{debug, warn};
@@ -100,7 +94,7 @@ impl Cloudflare {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Provider for Cloudflare {
     type DNSRecord = DNSRecord;
 
@@ -131,23 +125,13 @@ impl Provider for Cloudflare {
 
             for dns in &dns_result {
                 match (family, &dns.content) {
-                    (
-                        IpType::V6,
-                        DnsContent::AAAA {
-                            content: ip,
-                        },
-                    ) => {
+                    (IpType::V6, DnsContent::AAAA { content: ip }) => {
                         result.push(DNSRecord {
                             id: dns.id.clone(),
                             ip: IpAddr::V6(*ip),
                         });
                     },
-                    (
-                        IpType::V4,
-                        DnsContent::A {
-                            content: ip,
-                        },
-                    ) => {
+                    (IpType::V4, DnsContent::A { content: ip }) => {
                         result.push(DNSRecord {
                             id: dns.id.clone(),
                             ip: IpAddr::V4(*ip),
@@ -167,12 +151,8 @@ impl Provider for Cloudflare {
 
     async fn create_dns_record(&self, ip: &IpAddr, ttl: u32) -> Result<()> {
         let content = match *ip {
-            IpAddr::V6(ip) => DnsContent::AAAA {
-                content: ip,
-            },
-            IpAddr::V4(ip) => DnsContent::A {
-                content: ip,
-            },
+            IpAddr::V6(ip) => DnsContent::AAAA { content: ip },
+            IpAddr::V4(ip) => DnsContent::A { content: ip },
         };
         self.api_client
             .request(&CreateDnsRecord {
@@ -192,12 +172,8 @@ impl Provider for Cloudflare {
 
     async fn update_dns_record(&self, record: &Self::DNSRecord, ip: &IpAddr) -> Result<()> {
         let content = match *ip {
-            IpAddr::V6(ip) => DnsContent::AAAA {
-                content: ip,
-            },
-            IpAddr::V4(ip) => DnsContent::A {
-                content: ip,
-            },
+            IpAddr::V6(ip) => DnsContent::AAAA { content: ip },
+            IpAddr::V4(ip) => DnsContent::A { content: ip },
         };
         self.api_client
             .request(&UpdateDnsRecord {

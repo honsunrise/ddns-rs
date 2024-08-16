@@ -3,6 +3,7 @@ use std::net::IpAddr;
 use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
+use serde_json::json;
 
 use crate::Notifier;
 
@@ -34,7 +35,7 @@ impl Webhook {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Notifier for Webhook {
     async fn send(&self, new_ips: &[IpAddr]) -> anyhow::Result<()> {
         let url = &self.url;

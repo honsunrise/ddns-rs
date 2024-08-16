@@ -42,7 +42,7 @@ impl Peer {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Interface for Peer {
     async fn get_ip(&self, family: IpType) -> anyhow::Result<Vec<IpAddr>> {
         let (url, client, ip_field_path) = match family {

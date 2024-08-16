@@ -7,6 +7,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
+use serde_json::json;
 
 use super::{record_type_from_ip, Provider};
 use crate::IpType;
@@ -63,15 +64,12 @@ impl Godaddy {
             domain,
             name,
             client,
-            cred: Credentials {
-                api_key,
-                secret,
-            },
+            cred: Credentials { api_key, secret },
         })
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Provider for Godaddy {
     type DNSRecord = DNSRecord;
 

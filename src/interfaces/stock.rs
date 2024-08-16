@@ -19,7 +19,7 @@ impl Stock {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Interface for Stock {
     async fn get_ip(&self, family: IpType) -> Result<Vec<IpAddr>> {
         if let Some(interface) = datalink::interfaces()
@@ -30,7 +30,8 @@ impl Interface for Stock {
                 .ips
                 .into_iter()
                 .map(|ip| ip.ip())
-                .filter(IpAddr::is_global)
+                // TODO: Switch to `IpAddr::is_global` once stable: https://github.com/rust-lang/rust/issues/27709
+                .filter(is_global)
                 .filter(|ip| {
                     if family == IpType::V4 && ip.is_ipv4() {
                         return true;
@@ -48,5 +49,13 @@ impl Interface for Stock {
         } else {
             bail!("can't find except interface")
         }
+    }
+}
+
+#[inline]
+fn is_global(addr: &IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(ip) => !(ip.is_unspecified() || ip.is_private() || ip.is_loopback() || ip.is_link_local()),
+        IpAddr::V6(ip) => !(ip.is_loopback() || ip.is_unspecified()),
     }
 }

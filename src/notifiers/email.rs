@@ -174,7 +174,7 @@ DNS record updater
     format!("{}New IP List:\n{}", logo, new_ips_str)
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Notifier for Email {
     async fn send(&self, new_ips: &[IpAddr]) -> Result<()> {
         let email = Message::builder()
