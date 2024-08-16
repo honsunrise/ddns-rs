@@ -16,9 +16,9 @@ mod cloudflare;
 mod fake;
 mod godaddy;
 
-#[async_trait]
-pub trait Provider: Send + Sync {
-    type DNSRecord: AsRef<IpAddr> + Send + Sync + Eq + PartialEq;
+#[async_trait(?Send)]
+pub trait Provider {
+    type DNSRecord: AsRef<IpAddr> + Eq + PartialEq;
 
     async fn get_dns_record(&self, family: IpType) -> Result<Vec<Self::DNSRecord>>;
     async fn create_dns_record(&self, ip: &IpAddr, ttl: u32) -> Result<()>;
@@ -52,12 +52,12 @@ impl<'a, T: Provider> PartialEq<Self> for HashSetItem<'a, T> {
 
 impl<'a, T: Provider> Eq for HashSetItem<'a, T> {}
 
-#[async_trait]
-pub(crate) trait DynProvider: Send + Sync {
+#[async_trait(?Send)]
+pub(crate) trait DynProvider {
     async fn check_and_update(&self, new_ips: &[IpAddr], ttl: u32, force: bool, family: IpType) -> Result<Vec<IpAddr>>;
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl<P> DynProvider for P
 where
     P: Provider,
@@ -101,7 +101,7 @@ where
                 real_used_ips.push(*ip);
             }
         }
-        while let (Some(old_item), Some(new_item)) = (olds.get(0), news.get(0)) {
+        while let (Some(old_item), Some(new_item)) = (olds.first(), news.first()) {
             let record = old_item.ref_record.unwrap();
             let new_ip = new_item.ip;
             olds.remove(0);

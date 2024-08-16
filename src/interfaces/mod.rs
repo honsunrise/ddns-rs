@@ -10,7 +10,7 @@ use crate::IpType;
 mod peer;
 mod stock;
 
-#[async_trait]
-pub trait Interface: Send + Sync {
+#[async_trait(?Send)]
+pub trait Interface {
     async fn get_ip(&self, family: IpType) -> Result<Vec<IpAddr>>;
 }

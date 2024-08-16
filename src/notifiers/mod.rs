@@ -8,7 +8,7 @@ pub use webhook::Webhook;
 mod email;
 mod webhook;
 
-#[async_trait]
-pub trait Notifier: Send + Sync {
+#[async_trait(?Send)]
+pub trait Notifier {
     async fn send(&self, new_ips: &[IpAddr]) -> Result<()>;
 }

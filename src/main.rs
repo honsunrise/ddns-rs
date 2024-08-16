@@ -1,20 +1,15 @@
-#![feature(ip)]
-#![feature(async_closure)]
-
-#[macro_use]
-extern crate serde_json;
-
 use std::collections::HashMap;
 use std::env::{current_dir, set_current_dir};
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::path::PathBuf;
-use std::pin::Pin;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
 use clap::Parser;
 use factory::{create_interface, create_notifier, create_provider};
+use future::join_all;
 use futures::prelude::*;
 use interfaces::Interface;
 use log::{debug, error, info, warn, LevelFilter};
@@ -28,7 +23,6 @@ use log4rs::encode::pattern::PatternEncoder;
 use log4rs::filter::threshold::ThresholdFilter;
 use notifiers::Notifier;
 use providers::DynProvider;
-use rand::prelude::*;
 use setting::Setting;
 use shutdown::Shutdown;
 use tokio::time::{interval_at, sleep, Duration, Instant};
@@ -58,7 +52,7 @@ impl Display for IpType {
     }
 }
 
-fn setup_logger(level: log::LevelFilter, log_direction: PathBuf) -> Result<log4rs::Handle> {
+fn setup_logger(level: LevelFilter, log_direction: PathBuf) -> Result<log4rs::Handle> {
     let console_pattern = PatternEncoder::new("{h({d(%Y-%m-%d %H:%M:%S %Z)(local)} - {l} - {m})}\n");
     let file_pattern = PatternEncoder::new("{d(%Y-%m-%d %H:%M:%S %Z)(local)} - {l} - {m}\n");
     let file_path = log_direction.join("output.log");
@@ -80,7 +74,7 @@ fn setup_logger(level: log::LevelFilter, log_direction: PathBuf) -> Result<log4r
     );
     let rolling = FixedWindowRoller::builder().base(0).build(&rolling_file_pattern, 10)?;
     let policy = CompoundPolicy::new(Box::new(size_trigger), Box::new(rolling));
-    let logfile = RollingFileAppender::builder()
+    let log_file = RollingFileAppender::builder()
         .encoder(Box::new(file_pattern))
         .build(file_path, Box::new(policy))?;
 
@@ -88,7 +82,7 @@ fn setup_logger(level: log::LevelFilter, log_direction: PathBuf) -> Result<log4r
         .appender(
             Appender::builder()
                 .filter(Box::new(ThresholdFilter::new(level)))
-                .build("logfile", Box::new(logfile)),
+                .build("log_file", Box::new(log_file)),
         )
         .appender(
             Appender::builder()
@@ -97,7 +91,7 @@ fn setup_logger(level: log::LevelFilter, log_direction: PathBuf) -> Result<log4r
         )
         .build(
             Root::builder()
-                .appender("logfile")
+                .appender("log_file")
                 .appender("console")
                 .build(LevelFilter::Trace),
         )?;
@@ -106,9 +100,9 @@ fn setup_logger(level: log::LevelFilter, log_direction: PathBuf) -> Result<log4r
 
 async fn run_task(
     families: &[IpType],
-    provider: (Arc<Box<dyn DynProvider>>, u32, bool),
-    interface: Arc<Box<dyn Interface>>,
-    notifiers: Vec<Arc<Option<Box<dyn Notifier>>>>,
+    provider: (Rc<Box<dyn DynProvider>>, u32, bool),
+    interface: Rc<Box<dyn Interface>>,
+    notifiers: Vec<Rc<Option<Box<dyn Notifier>>>>,
 ) -> Result<()> {
     let (provider, ttl, force) = provider;
     for family in families {
@@ -144,14 +138,14 @@ async fn run(shutdown: Arc<Shutdown>, setting: Setting) -> Result<()> {
     let mut interface_map = HashMap::new();
     for (name, interface) in setting.interfaces {
         let interface = create_interface(interface.kind, interface.args).await?;
-        interface_map.insert(name, Arc::new(interface));
+        interface_map.insert(name, Rc::new(interface));
     }
 
     debug!("building notifiers");
     let mut notifier_map = HashMap::new();
     for (name, notifier) in setting.notifiers {
         let notifier = create_notifier(notifier.kind, notifier.args).await?;
-        notifier_map.insert(name, Arc::new(notifier));
+        notifier_map.insert(name, Rc::new(notifier));
     }
 
     debug!("building providers");
@@ -160,12 +154,10 @@ async fn run(shutdown: Arc<Shutdown>, setting: Setting) -> Result<()> {
         let force = provider.force;
         let ttl = provider.ttl;
         let provider = create_provider(shutdown.clone(), provider.kind, provider.args).await?;
-        provider_map.insert(name, (Arc::new(provider), ttl, force));
+        provider_map.insert(name, (Rc::new(provider), ttl, force));
     }
 
-    let shutdown_for_create_all_task = shutdown.clone();
-    let create_task = move |start_delay: Duration, task: &setting::Task| -> Result<_> {
-        let shutdown_for_create_all_task = shutdown_for_create_all_task.clone();
+    let create_task = move |start_delay: Duration, task_name: String, task: setting::Task| -> Result<_> {
         let family = &*task.family;
         let families: &[IpType] = match family {
             "ipv4" => &[IpType::V4],
@@ -192,59 +184,39 @@ async fn run(shutdown: Arc<Shutdown>, setting: Setting) -> Result<()> {
             .ok_or_else(|| anyhow!("can't find provider define"))?
             .clone();
         let interval_duration = Duration::from_secs(task.interval as u64);
-        Ok(Box::pin(async move {
+        Ok(async move {
             let start = Instant::now() + start_delay;
             let mut check_timer = interval_at(start, interval_duration);
             loop {
-                select! {
-                    _ = shutdown_for_create_all_task.receive() => {
-                        break;
-                    },
-                    _ = check_timer.tick() => {}
+                check_timer.tick().await;
+                if let Err(err) = run_task(families, provider.clone(), interface.clone(), notifiers.clone()).await {
+                    warn!("task '{task_name}' happen error: {err:#?}");
                 }
-                run_task(families, provider.clone(), interface.clone(), notifiers.clone()).await?;
             }
-
-            #[allow(unreachable_code)]
-            Result::<_>::Ok(())
-        }))
+        })
     };
 
     debug!("building task");
-    let shutdown_for_shutdown_task = shutdown.clone();
-    let shutdown_task = Box::pin(async move {
-        shutdown_for_shutdown_task.receive().await;
-        Ok(())
-    });
-    let mut task_handles: Vec<Pin<Box<dyn Future<Output = Result<()>>>>> = vec![shutdown_task];
-    let mut tasks = vec![];
-    for (i, (_, task)) in setting.tasks.iter().enumerate() {
-        let future = create_task(Duration::from_secs(base.task_startup_interval * i as u64), task)?;
-        task_handles.push(future);
-        tasks.push(task);
+    let shutdown_signal = shutdown.receive();
+
+    let mut task_futures = Vec::new();
+    for (i, (task_name, task)) in setting.tasks.into_iter().enumerate() {
+        let future = create_task(
+            Duration::from_secs(base.task_startup_interval * i as u64),
+            task_name,
+            task,
+        )?;
+        task_futures.push(future);
     }
 
     debug!("starting tasks");
-    let mut rng = thread_rng();
-    loop {
-        if task_handles.is_empty() {
-            info!("no alive task");
-            return Ok(());
+    select! {
+        _ = shutdown_signal => {},
+        _ = join_all(task_futures) => {
+            warn!("all tasks are finished");
         }
-        let (result, task_index, mut remain) = future::select_all(task_handles).await;
-        if task_index == 0 {
-            info!("waiting remain task complete");
-            future::join_all(remain).await;
-            return Ok(());
-        }
-        result.unwrap_or_else(|err| error!("task happen error: {}", err));
-        let future = create_task(
-            Duration::from_secs(base.task_retry_timeout + rng.gen_range(0..5)),
-            tasks.get(task_index - 1).unwrap(),
-        )?;
-        remain.insert(task_index, future);
-        task_handles = remain;
     }
+    Ok(())
 }
 
 /// ┌┬┐┌┬┐┌┐┌┌─┐   ┬─┐┌─┐
@@ -284,7 +256,7 @@ struct Opts {
 }
 
 #[tokio::main]
-async fn real_main(config_file: String, log_level: log::LevelFilter, log_direction: PathBuf) {
+async fn real_main(config_file: String, log_level: LevelFilter, log_direction: PathBuf) {
     // setup logger
     setup_logger(log_level, log_direction).expect("can't setup logger");
 
@@ -414,14 +386,14 @@ fn main() {
     let opts: Opts = Opts::parse();
 
     let log_level = if opts.silence {
-        log::LevelFilter::Off
+        LevelFilter::Off
     } else {
         match opts.verbose {
-            0 | 1 => log::LevelFilter::Error,
-            2 => log::LevelFilter::Warn,
-            3 => log::LevelFilter::Info,
-            4 => log::LevelFilter::Debug,
-            _ => log::LevelFilter::Trace,
+            0 | 1 => LevelFilter::Error,
+            2 => LevelFilter::Warn,
+            3 => LevelFilter::Info,
+            4 => LevelFilter::Debug,
+            _ => LevelFilter::Trace,
         }
     };
 
@@ -450,7 +422,7 @@ fn main() {
             if let Some(pid_file) = opts.pid_path {
                 daemonize = daemonize.pid_file(pid_file).chown_pid_file(true);
             }
-            if log_level > log::LevelFilter::Info {
+            if log_level > LevelFilter::Info {
                 let stdout = File::create("daemon-dbg.out").expect("can't create daemon stdout file");
                 let stderr = File::create("daemon-dbg.err").expect("can't create daemon stderr file");
 

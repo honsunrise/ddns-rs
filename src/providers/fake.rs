@@ -25,7 +25,7 @@ pub struct DNSRecord {
 
 impl PartialOrd for DNSRecord {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.deadline.partial_cmp(&other.deadline)
+        Some(self.cmp(other))
     }
 }
 
@@ -104,7 +104,7 @@ impl Fake {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl Provider for Fake {
     type DNSRecord = DNSRecord;
 

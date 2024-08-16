@@ -11,3 +11,8 @@
 ## v0.1.2 - 2023-05-08
 
 * Bump dependencies
+
+## v0.1.3 - 2024-08-16
+
+* Bump dependencies
+* Use stable toolchain
