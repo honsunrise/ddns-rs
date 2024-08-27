@@ -82,7 +82,7 @@ impl Interface for Peer {
                 let result = result.json::<HashMap<String, String>>().await?;
                 let result = path_value::to_value(result)?;
                 let ip = result
-                    .get::<String, _, _>(ip_field_path)?
+                    .get::<String, _, _>(parties[1])?
                     .ok_or_else(|| anyhow!("can't get ip by peer"))?;
                 ips.push(ip.parse()?);
             },
