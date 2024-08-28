@@ -147,7 +147,8 @@ pub(crate) async fn create_provider<S: AsRef<str>>(
         "cloudflare" => {
             let token = from_args_str!(args, "token");
             let dns = from_args_str!(args, "dns");
-            Box::new(providers::Cloudflare::create(token, dns).await?)
+            let proxied = option_from_args_bool!(args, "proxied");
+            Box::new(providers::Cloudflare::create(token, dns, proxied.unwrap_or_default()).await?)
         },
         "godaddy" => {
             let api_key = from_args_str!(args, "api_key");
