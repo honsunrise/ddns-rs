@@ -16,3 +16,4 @@
 
 * Bump dependencies
 * Use stable toolchain
+* Call cloudflare API use our implementation replace `cloudflare-rs` crate
