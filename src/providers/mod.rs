@@ -32,25 +32,25 @@ struct HashSetItem<'a, T: Provider> {
     ref_record: Option<&'a T::DNSRecord>,
 }
 
-impl<'a, T: Provider> Hash for HashSetItem<'a, T> {
+impl<T: Provider> Hash for HashSetItem<'_, T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.ip.hash(state)
     }
 }
 
-impl<'a, T: Provider> PartialOrd for HashSetItem<'a, T> {
+impl<T: Provider> PartialOrd for HashSetItem<'_, T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.ip.partial_cmp(other.ip)
     }
 }
 
-impl<'a, T: Provider> PartialEq<Self> for HashSetItem<'a, T> {
+impl<T: Provider> PartialEq<Self> for HashSetItem<'_, T> {
     fn eq(&self, other: &Self) -> bool {
         self.ip.eq(other.ip)
     }
 }
 
-impl<'a, T: Provider> Eq for HashSetItem<'a, T> {}
+impl<T: Provider> Eq for HashSetItem<'_, T> {}
 
 #[async_trait(?Send)]
 pub(crate) trait DynProvider {
