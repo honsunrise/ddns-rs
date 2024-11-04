@@ -214,7 +214,7 @@ async fn run(shutdown: Arc<Shutdown>, setting: Setting) -> Result<()> {
         _ = shutdown_signal => {},
         _ = join_all(task_futures) => {
             warn!("all tasks are finished");
-        }
+        },
     }
     Ok(())
 }
@@ -255,7 +255,6 @@ struct Opts {
     log_direction: Option<PathBuf>,
 }
 
-#[tokio::main]
 async fn real_main(config_file: String, log_level: LevelFilter, log_direction: PathBuf) {
     // setup logger
     setup_logger(log_level, log_direction).expect("can't setup logger");
@@ -375,10 +374,21 @@ async fn real_main(config_file: String, log_level: LevelFilter, log_direction: P
                 },
                 _ = sleep(Duration::from_secs(10)), if retry => {
                     retry = false
-                }
+                },
             }
         }
     }
+}
+
+#[inline]
+fn build_tokio_runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .thread_stack_size(1024 * 1024)
+        .thread_name("tokio worker")
+        .build()
+        .unwrap()
 }
 
 fn main() {
@@ -431,7 +441,8 @@ fn main() {
             daemonize = daemonize.working_directory(current_direction);
             match daemonize.start() {
                 Ok(_) => {
-                    real_main(opts.config, log_level, log_direction);
+                    let runtime = build_tokio_runtime();
+                    runtime.block_on(real_main(opts.config, log_level, log_direction));
                 },
                 Err(err) => {
                     error!("can't start daemonize: {}", err);
@@ -439,13 +450,15 @@ fn main() {
             }
         } else {
             info!("starting");
-            real_main(opts.config, log_level, log_direction);
+            let runtime = build_tokio_runtime();
+            runtime.block_on(real_main(opts.config, log_level, log_direction));
         }
     }
 
     #[cfg(not(target_family = "unix"))]
     {
         info!("starting");
-        real_main(opts.config, log_level, log_direction);
+        let runtime = build_tokio_runtime();
+        runtime.block_on(real_main(opts.config, log_level, log_direction));
     }
 }
