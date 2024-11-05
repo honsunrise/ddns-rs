@@ -1,6 +1,6 @@
 [package]
 name = "ddns-rs"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 authors = ["Honsun Zhu <honsun@linux.com>"]
 readme = "README.md"
@@ -42,5 +42,4 @@ daemonize = "0.5"
 
 [profile.release]
 codegen-units = 16
-debug = true
 lto = "thin"
